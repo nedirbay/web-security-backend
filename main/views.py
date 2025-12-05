@@ -9,6 +9,7 @@ from rest_framework.decorators import api_view
 from rest_framework import status
 from zapv2 import ZAPv2
 import time
+from googletrans import Translator
 # get all blogcategories
 
 @api_view(['GET'])
@@ -84,18 +85,30 @@ class OWASPScanView(APIView):
             # Active scan bolmasa-da, Passive scan (trafigi diňlemek) 
             # arkaly tapylan ýalňyşlyklar (headers, cookies we ş.m.) çykar.
             alerts = zap.core.alerts(baseurl=target_url)
-            
+            translator = Translator()
+
             formatted_alerts = []
             for alert in alerts:
+                try:
+                    # Esasy sözbaşyny terjime etmek
+                    translated_alert = translator.translate(alert.get('alert'), dest='tk').text
+                    translated_desc = translator.translate(alert.get('description'), dest='tk').text
+                    translated_sol = translator.translate(alert.get('solution'), dest='tk').text
+                except:
+                    # Eger internet ýok bolsa ýa-da hatalyk bolsa, originalyny goý
+                    translated_alert = alert.get('alert')
+                    translated_desc = alert.get('description')
+                    translated_sol = alert.get('solution')
+
                 formatted_alerts.append({
-                    "alert": alert.get('alert'),
-                    "risk": alert.get('risk'),
+                    "alert": translated_alert,
+                    "risk": alert.get('risk'), # Risk derejesi (Low/High) şeýle galany gowy
                     "confidence": alert.get('confidence'),
                     "url": alert.get('url'),
-                    "description": alert.get('description'),
-                    "solution": alert.get('solution')
+                    "description": translated_desc,
+                    "solution": translated_sol
                 })
-
+            
             return Response({
                 "message": "Skanirleme (Spider & Passive) üstünlikli tamamlandy",
                 "target": target_url,
