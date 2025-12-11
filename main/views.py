@@ -1,6 +1,5 @@
-from django.shortcuts import render
-from django_filters.views import FilterView
-from .models import Blog, BlogCategory
+from django.utils import timezone
+from .models import Blog, BlogCategory, Scan, Alert
 from .filtrs import BlogFilter
 from rest_framework.views import APIView
 from .serializer import BlogSerializer, BlogCategorySerializer
@@ -10,25 +9,53 @@ from rest_framework import status
 from zapv2 import ZAPv2
 import time
 from googletrans import Translator
-# get all blogcategories
+from django.contrib.auth import authenticate, login
+from rest_framework.pagination import PageNumberPagination
 
+# get all blogcategories
 @api_view(['GET'])
 def blogcategory_list(request): 
     blogcategories = BlogCategory.objects.all()
     serializer = BlogCategorySerializer(blogcategories, many=True)
     return Response(serializer.data)
 
-# get all blogs with filter
 @api_view(['GET'])
-def blog_list(request):
+def blog_list(request): 
     blogs = Blog.objects.all()
-    filter = BlogFilter(request.GET, queryset=blogs)
-    serializer = BlogSerializer(filter.qs, many=True)
+    filter_set = BlogFilter(request.GET, queryset=blogs)
+    filtered_qs = filter_set.qs
+    paginator = PageNumberPagination()
+    paginator.page_size = 10
+    page = paginator.paginate_queryset(filtered_qs, request) 
+    serializer = BlogSerializer(page, many=True)
+    return paginator.get_paginated_response(serializer.data)
+
+# get blog detail
+@api_view(['GET'])
+def blog_detail(request, pk):
+    blog = Blog.objects.get(pk=pk)
+    serializer = BlogSerializer(blog)
     return Response(serializer.data)
+
 
 ZAP_API_KEY = 'u3a642dp7nchdoi6vqotikufs'  
 ZAP_PROXY_HOST = '127.0.0.1'
 ZAP_PROXY_PORT = '8080'
+
+# check is admin user
+@api_view(['POST'])
+def adminLogin(request):
+    username = request.data.get('username')
+    password = request.data.get('password')
+    user = authenticate(username=username, password=password)
+    if user is not None:
+        if user.is_superuser:
+            login(request, user)
+            return Response({'message': 'Login successful', 'user': user.username}, status=status.HTTP_200_OK)
+        else:
+            return Response({'message': 'You are not authorized to login'}, status=status.HTTP_401_UNAUTHORIZED)
+    else:
+        return Response({'message': 'Invalid credentials'}, status=status.HTTP_401_UNAUTHORIZED)
 
 class OWASPScanView(APIView):
     """
@@ -41,6 +68,12 @@ class OWASPScanView(APIView):
 
         if not target_url:
             return Response({"error": "URL hökman girizilmeli"}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Scan kaydı oluştur
+        scan_obj = Scan.objects.create(
+            target_url=target_url,
+            status='RUNNING'
+        )
 
         # 1. ZAP-a baglanmak
         zap = ZAPv2(apikey=ZAP_API_KEY, proxies={
@@ -59,7 +92,6 @@ class OWASPScanView(APIView):
             scan_id = zap.spider.scan(target_url)
             
             # Spider gutarýança garaşmak
-            # Spider adatça çalt gutarýar
             while int(zap.spider.status(scan_id)) < 100:
                 print(f"Spider progress: {zap.spider.status(scan_id)}%")
                 time.sleep(1) # Gysga wagt garaşmak ýeterlik
@@ -88,6 +120,14 @@ class OWASPScanView(APIView):
             translator = Translator()
 
             formatted_alerts = []
+            
+            risk_mapping = {
+                'High': 'HIGH',
+                'Medium': 'MEDIUM',
+                'Low': 'LOW',
+                'Informational': 'INFO'
+            }
+
             for alert in alerts:
                 try:
                     # Esasy sözbaşyny terjime etmek
@@ -100,6 +140,22 @@ class OWASPScanView(APIView):
                     translated_desc = alert.get('description')
                     translated_sol = alert.get('solution')
 
+                # Alert kaydı oluştur
+                Alert.objects.create(
+                    scan_job=scan_obj,
+                    risk_level=risk_mapping.get(alert.get('risk'), 'INFO'),
+                    alert_name=translated_alert,
+                    confidence=alert.get('confidence'),
+                    description=translated_desc,
+                    solution=translated_sol,
+                    reference=alert.get('reference'),
+                    url=alert.get('url'),
+                    param=alert.get('param'),
+                    evidence=alert.get('evidence'),
+                    cwe_id=int(alert.get('cweid')) if alert.get('cweid') and str(alert.get('cweid')).isdigit() else None,
+                    wasc_id=int(alert.get('wascid')) if alert.get('wascid') and str(alert.get('wascid')).isdigit() else None
+                )
+
                 formatted_alerts.append({
                     "alert": translated_alert,
                     "risk": alert.get('risk'), # Risk derejesi (Low/High) şeýle galany gowy
@@ -109,6 +165,11 @@ class OWASPScanView(APIView):
                     "solution": translated_sol
                 })
             
+            # Scan tamamlandı
+            scan_obj.status = 'COMPLETED'
+            scan_obj.end_time = timezone.now()
+            scan_obj.save()
+
             return Response({
                 "message": "Skanirleme (Spider & Passive) üstünlikli tamamlandy",
                 "target": target_url,
@@ -117,4 +178,20 @@ class OWASPScanView(APIView):
             }, status=status.HTTP_200_OK)
 
         except Exception as e:
+            # Hata durumunda
+            scan_obj.status = 'FAILED'
+            scan_obj.end_time = timezone.now()
+            scan_obj.save()
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+class OWASPScanListView(APIView):
+    def get(self, request):
+        scans = Scan.objects.all()
+        return Response({"scans": list(scans.values())})
+
+# get scan Alerts 
+class OWASPScanAlertsView(APIView):
+    def get(self, request, scan_id):
+        scan = Scan.objects.get(id=scan_id)
+        alerts = Alert.objects.filter(scan_job=scan)
+        return Response({"alerts": list(alerts.values())})
