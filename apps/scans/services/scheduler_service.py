@@ -4,6 +4,7 @@ from datetime import timedelta
 from django.utils import timezone
 
 from apps.scans.models import Scan, ScanSchedule
+from apps.scans.services.queue_service import consume_scan_job, publish_scan_job
 
 
 def compute_next_run(schedule: ScanSchedule, from_time=None):
@@ -20,7 +21,9 @@ def enqueue_due_schedules(now=None):
     due = ScanSchedule.objects.filter(is_enabled=True, next_run_at__lte=now)
     count = 0
     for schedule in due:
-        schedule.create_scan_job()
+        scan = schedule.create_scan_job()
+        if schedule.queue_backend == "rabbitmq":
+            publish_scan_job(scan.id)
         schedule.next_run_at = compute_next_run(schedule, from_time=now)
         schedule.save(update_fields=["next_run_at", "updated_at"])
         count += 1
@@ -28,7 +31,14 @@ def enqueue_due_schedules(now=None):
 
 
 def run_worker_once(executor):
-    queued = Scan.objects.filter(status=Scan.Status.QUEUED).order_by("created_at").first()
+    queued = None
+
+    scan_id = consume_scan_job()
+    if scan_id:
+        queued = Scan.objects.filter(id=scan_id, status=Scan.Status.QUEUED).first()
+
+    if queued is None:
+        queued = Scan.objects.filter(status=Scan.Status.QUEUED).order_by("created_at").first()
     if not queued:
         return None
 

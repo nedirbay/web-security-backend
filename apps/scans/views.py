@@ -1,4 +1,6 @@
 """Views for scanner integration, scheduling, vulnerabilities and analytics."""
+import os
+
 from django.db.models import Count, Q
 from django.db.models.functions import TruncDate
 from django.shortcuts import get_object_or_404
@@ -7,6 +9,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.scans.models import Scan, ScanSchedule, Vulnerability, ZapConfiguration
+from apps.core.models import Notification
 from apps.scans.serializers.scan_serializers import (
     ScanScheduleSerializer,
     ScanSerializer,
@@ -31,9 +34,24 @@ def _persist_vulnerabilities(scan: Scan):
         )
 
 
+def _create_scan_notification(scan: Scan):
+    severity_rank = {"High": 3, "Medium": 2, "Low": 1, "Info": 0}
+    highest = "Info"
+    for alert in scan.parsed_alerts:
+        risk = alert.get("risk", "Info")
+        if severity_rank.get(risk, 0) > severity_rank.get(highest, 0):
+            highest = risk
+    Notification.objects.create(
+        user=scan.owner,
+        type=Notification.Type.INFO if scan.status == Scan.Status.COMPLETED else Notification.Type.WARNING,
+        message=f"Scan #{scan.id} finished with status {scan.status}. Highest risk: {highest}.",
+        is_read=False,
+    )
+
+
 def _execute_scan(scan: Scan):
     config = ZapConfiguration.objects.filter(owner=scan.owner, is_active=True).first()
-    api_url = config.api_url if config else "http://localhost:8080"
+    api_url = config.api_url if config else os.getenv("ZAP_API_URL", "http://localhost:8090")
     api_key = config.api_key if config else ""
     timeout = config.timeout_seconds if config else 120
 
@@ -81,6 +99,7 @@ class ScanRunView(APIView):
         scan.status = Scan.Status.COMPLETED
         scan.save(update_fields=["status", "updated_at", "completed_at", "zap_scan_id", "raw_results", "parsed_alerts"])
         _persist_vulnerabilities(scan)
+        _create_scan_notification(scan)
         return Response(ScanSerializer(scan).data, status=status.HTTP_200_OK)
 
 
@@ -177,6 +196,7 @@ class SchedulerWorkerRunView(APIView):
         if processed is None:
             return Response({"processed": False}, status=status.HTTP_200_OK)
         _persist_vulnerabilities(processed)
+        _create_scan_notification(processed)
         return Response({"processed": True, "scan_id": processed.id, "status": processed.status}, status=status.HTTP_200_OK)
 
 
