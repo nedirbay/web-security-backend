@@ -1,15 +1,18 @@
 """Views for scanner integration, scheduling, vulnerabilities and analytics."""
 import os
+import re
 
 from django.db.models import Count, Q
 from django.db.models.functions import TruncDate
 from django.shortcuts import get_object_or_404
 from rest_framework import generics, permissions, status
+from rest_framework import serializers
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.scans.models import Scan, ScanSchedule, Vulnerability, ZapConfiguration
 from apps.core.models import Notification
+from apps.core.security import AdminIPWhitelistPermission
 from apps.scans.serializers.scan_serializers import (
     ScanScheduleSerializer,
     ScanSerializer,
@@ -18,6 +21,22 @@ from apps.scans.serializers.scan_serializers import (
 )
 from apps.scans.services.scheduler_service import enqueue_due_schedules, run_worker_once
 from apps.scans.services.zap_client import ZapClient, parse_alerts
+
+
+class APIScanRequestSerializer(serializers.Serializer):
+    method = serializers.ChoiceField(choices=["GET", "POST", "PUT", "PATCH", "DELETE"], default="GET")
+    path = serializers.CharField(max_length=300)
+    headers = serializers.DictField(required=False)
+    body = serializers.DictField(required=False)
+
+
+class JWTCheckSerializer(serializers.Serializer):
+    token = serializers.CharField()
+
+
+class GraphQLScanSerializer(serializers.Serializer):
+    endpoint = serializers.URLField()
+    query = serializers.CharField(required=False, allow_blank=True)
 
 
 def _persist_vulnerabilities(scan: Scan):
@@ -181,7 +200,7 @@ class ScanScheduleListCreateView(generics.ListCreateAPIView):
 
 
 class SchedulerEnqueueView(APIView):
-    permission_classes = [permissions.IsAdminUser]
+    permission_classes = [permissions.IsAdminUser, AdminIPWhitelistPermission]
 
     def post(self, request):
         count = enqueue_due_schedules()
@@ -189,7 +208,7 @@ class SchedulerEnqueueView(APIView):
 
 
 class SchedulerWorkerRunView(APIView):
-    permission_classes = [permissions.IsAdminUser]
+    permission_classes = [permissions.IsAdminUser, AdminIPWhitelistPermission]
 
     def post(self, request):
         processed = run_worker_once(_execute_scan)
@@ -276,6 +295,106 @@ class TimeBasedReportView(APIView):
                 "scan_failed": scans.filter(status=Scan.Status.FAILED).count(),
                 "vulnerability_total": vulns.count(),
                 "vulnerabilities_by_day": list(by_day),
+            },
+            status=status.HTTP_200_OK,
+        )
+
+
+class APIScanSimulateView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        serializer = APIScanRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        method = serializer.validated_data["method"]
+        path = serializer.validated_data["path"]
+        headers = serializer.validated_data.get("headers", {})
+        body = serializer.validated_data.get("body", {})
+
+        findings = []
+        if method in {"POST", "PUT", "PATCH"} and not body:
+            findings.append({"name": "Empty request body", "severity": "Low"})
+        if "Authorization" not in headers:
+            findings.append({"name": "Missing Authorization header", "severity": "Medium"})
+        if re.search(r"/admin|/internal", path, re.IGNORECASE):
+            findings.append({"name": "Sensitive path exposure", "severity": "High"})
+
+        return Response({"request": serializer.validated_data, "findings": findings}, status=status.HTTP_200_OK)
+
+
+class JWTVulnerabilityCheckView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        serializer = JWTCheckSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        token = serializer.validated_data["token"]
+
+        issues = []
+        parts = token.split(".")
+        if len(parts) != 3:
+            issues.append("Malformed JWT format")
+        if token.lower().startswith("bearer "):
+            issues.append("Token should be raw JWT without Bearer prefix")
+        if "none" in token.lower():
+            issues.append("Potential none-alg usage indicator")
+        return Response({"issues": issues, "risk": "High" if issues else "Low"}, status=status.HTTP_200_OK)
+
+
+class GraphQLSecurityScanView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request):
+        serializer = GraphQLScanSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        query = serializer.validated_data.get("query", "")
+
+        findings = []
+        if "__schema" in query or "__type" in query:
+            findings.append({"name": "Introspection query detected", "severity": "Medium"})
+        if "mutation" in query and "auth" not in query.lower():
+            findings.append({"name": "Mutation without visible auth context", "severity": "Low"})
+        if not findings:
+            findings.append({"name": "No obvious GraphQL anti-pattern found", "severity": "Info"})
+        return Response({"endpoint": serializer.validated_data["endpoint"], "findings": findings}, status=status.HTTP_200_OK)
+
+
+class HeaderAnalysisView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        csp = request.META.get("HTTP_CSP", "")
+        hsts = request.META.get("HTTP_STRICT_TRANSPORT_SECURITY", "")
+        result = {
+            "csp_present": bool(csp),
+            "hsts_present": bool(hsts),
+            "csp_status": "good" if csp else "missing",
+            "hsts_status": "good" if hsts else "missing",
+        }
+        return Response(result, status=status.HTTP_200_OK)
+
+
+class AIAssistantSummaryView(APIView):
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        vulns = Vulnerability.objects.filter(owner=request.user, is_false_positive=False)
+        high = vulns.filter(severity="High").count()
+        medium = vulns.filter(severity="Medium").count()
+        low = vulns.filter(severity="Low").count()
+        risk = "Critical" if high >= 3 else "High" if high else "Medium" if medium else "Low"
+
+        explanation = f"Detected {high} high, {medium} medium, {low} low vulnerabilities."
+        suggestions = [
+            "Prioritize patching high severity findings first.",
+            "Enable strict security headers (CSP/HSTS) globally.",
+            "Re-run active scans after fixes and close validated items.",
+        ]
+        return Response(
+            {
+                "risk_summary": risk,
+                "vulnerability_explanation": explanation,
+                "auto_fix_suggestions": suggestions,
             },
             status=status.HTTP_200_OK,
         )

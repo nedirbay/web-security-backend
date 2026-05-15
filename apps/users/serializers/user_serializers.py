@@ -6,6 +6,7 @@ from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
 from django.utils.translation import gettext_lazy as _
+from apps.core.security import sanitize_text
 from apps.users.models import CustomUser, UserProfile, APIKey
 
 
@@ -78,8 +79,12 @@ class UserProfileSerializer(serializers.ModelSerializer):
         if user_data:
             user = instance.user
             for attr, value in user_data.items():
+                if isinstance(value, str):
+                    value = sanitize_text(value)
                 setattr(user, attr, value)
             user.save()
+        if "bio" in validated_data and isinstance(validated_data["bio"], str):
+            validated_data["bio"] = sanitize_text(validated_data["bio"])
         return super().update(instance, validated_data)
 
 

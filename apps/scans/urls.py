@@ -2,6 +2,11 @@
 from django.urls import path
 
 from .views import (
+    AIAssistantSummaryView,
+    APIScanSimulateView,
+    GraphQLSecurityScanView,
+    HeaderAnalysisView,
+    JWTVulnerabilityCheckView,
     MostCommonIssuesView,
     RiskHeatmapView,
     ScanListCreateView,
@@ -35,4 +40,9 @@ urlpatterns = [
     path("analytics/scan-success-rate/", ScanSuccessRateView.as_view(), name="analytics-scan-success-rate"),
     path("analytics/risk-heatmap/", RiskHeatmapView.as_view(), name="analytics-risk-heatmap"),
     path("analytics/time-based-report/", TimeBasedReportView.as_view(), name="analytics-time-based-report"),
+    path("advanced/api-scan/", APIScanSimulateView.as_view(), name="advanced-api-scan"),
+    path("advanced/jwt-check/", JWTVulnerabilityCheckView.as_view(), name="advanced-jwt-check"),
+    path("advanced/graphql-scan/", GraphQLSecurityScanView.as_view(), name="advanced-graphql-scan"),
+    path("advanced/header-analysis/", HeaderAnalysisView.as_view(), name="advanced-header-analysis"),
+    path("advanced/ai-summary/", AIAssistantSummaryView.as_view(), name="advanced-ai-summary"),
 ]

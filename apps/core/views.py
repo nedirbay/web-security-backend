@@ -3,15 +3,19 @@ from django.contrib.auth import get_user_model
 from django.db.models import Count, Q
 from django.shortcuts import get_object_or_404
 from rest_framework import generics, permissions, status
+from rest_framework.exceptions import PermissionDenied
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.core.models import AuditLog, Role, SystemSetting
+from apps.core.models import AuditLog, BlogPost, DocumentationPage, Role, SystemSetting
+from apps.core.security import AdminIPWhitelistPermission
 from apps.core.serializers import (
     AdminUserSerializer,
     AdminUserUpdateSerializer,
     AssignTargetSerializer,
     AuditLogSerializer,
+    BlogPostSerializer,
+    DocumentationPageSerializer,
     RoleSerializer,
     SystemSettingSerializer,
 )
@@ -22,7 +26,7 @@ User = get_user_model()
 
 
 class AdminDashboardView(APIView):
-    permission_classes = [permissions.IsAdminUser]
+    permission_classes = [permissions.IsAdminUser, AdminIPWhitelistPermission]
 
     def get(self, request):
         data = {
@@ -39,14 +43,14 @@ class AdminDashboardView(APIView):
 
 
 class AdminUserListView(generics.ListAPIView):
-    permission_classes = [permissions.IsAdminUser]
+    permission_classes = [permissions.IsAdminUser, AdminIPWhitelistPermission]
     serializer_class = AdminUserSerializer
     queryset = User.objects.all().select_related("role")
     pagination_class = None
 
 
 class AdminUserManageView(APIView):
-    permission_classes = [permissions.IsAdminUser]
+    permission_classes = [permissions.IsAdminUser, AdminIPWhitelistPermission]
 
     def patch(self, request, pk):
         user = get_object_or_404(User, pk=pk)
@@ -78,7 +82,7 @@ class AdminUserManageView(APIView):
 
 
 class AdminAssignTargetView(APIView):
-    permission_classes = [permissions.IsAdminUser]
+    permission_classes = [permissions.IsAdminUser, AdminIPWhitelistPermission]
 
     def post(self, request, pk):
         user = get_object_or_404(User, pk=pk)
@@ -99,14 +103,14 @@ class AdminAssignTargetView(APIView):
 
 
 class RoleListView(generics.ListAPIView):
-    permission_classes = [permissions.IsAdminUser]
+    permission_classes = [permissions.IsAdminUser, AdminIPWhitelistPermission]
     serializer_class = RoleSerializer
     queryset = Role.objects.all()
     pagination_class = None
 
 
 class SystemSettingListCreateView(generics.ListCreateAPIView):
-    permission_classes = [permissions.IsAdminUser]
+    permission_classes = [permissions.IsAdminUser, AdminIPWhitelistPermission]
     serializer_class = SystemSettingSerializer
     queryset = SystemSetting.objects.all()
     pagination_class = None
@@ -123,7 +127,7 @@ class SystemSettingListCreateView(generics.ListCreateAPIView):
 
 
 class SystemSettingDetailView(generics.RetrieveUpdateAPIView):
-    permission_classes = [permissions.IsAdminUser]
+    permission_classes = [permissions.IsAdminUser, AdminIPWhitelistPermission]
     serializer_class = SystemSettingSerializer
     queryset = SystemSetting.objects.all()
 
@@ -139,7 +143,101 @@ class SystemSettingDetailView(generics.RetrieveUpdateAPIView):
 
 
 class AuditLogListView(generics.ListAPIView):
-    permission_classes = [permissions.IsAdminUser]
+    permission_classes = [permissions.IsAdminUser, AdminIPWhitelistPermission]
     serializer_class = AuditLogSerializer
     queryset = AuditLog.objects.all().select_related("actor")
     pagination_class = None
+
+
+class BlogPostListCreateView(generics.ListCreateAPIView):
+    serializer_class = BlogPostSerializer
+    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+
+    def get_queryset(self):
+        qs = BlogPost.objects.all().select_related("author")
+        if not self.request.user.is_authenticated or not self.request.user.is_staff:
+            qs = qs.filter(status=BlogPost.Status.PUBLISHED)
+
+        search = self.request.query_params.get("search")
+        status_q = self.request.query_params.get("status")
+        tag = self.request.query_params.get("tag")
+        if search:
+            qs = qs.filter(Q(title__icontains=search) | Q(content__icontains=search) | Q(tags__icontains=search))
+        if status_q:
+            qs = qs.filter(status=status_q)
+        if tag:
+            qs = qs.filter(tags__icontains=tag)
+        return qs
+
+    def perform_create(self, serializer):
+        if not self.request.user.is_staff:
+            raise PermissionDenied("Only admin users can create blog posts.")
+        serializer.save(author=self.request.user)
+
+
+class BlogPostDetailView(generics.RetrieveUpdateDestroyAPIView):
+    serializer_class = BlogPostSerializer
+    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+
+    def get_queryset(self):
+        qs = BlogPost.objects.all().select_related("author")
+        if not self.request.user.is_authenticated or not self.request.user.is_staff:
+            qs = qs.filter(status=BlogPost.Status.PUBLISHED)
+        return qs
+
+    def perform_update(self, serializer):
+        if not self.request.user.is_staff:
+            raise PermissionDenied("Only admin users can update blog posts.")
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        if not self.request.user.is_staff:
+            raise PermissionDenied("Only admin users can delete blog posts.")
+        instance.delete()
+
+
+class DocumentationPageListCreateView(generics.ListCreateAPIView):
+    serializer_class = DocumentationPageSerializer
+    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+
+    def get_queryset(self):
+        qs = DocumentationPage.objects.all()
+        if not self.request.user.is_authenticated or not self.request.user.is_staff:
+            qs = qs.filter(is_published=True)
+
+        search = self.request.query_params.get("search")
+        category = self.request.query_params.get("category")
+        published = self.request.query_params.get("is_published")
+        if search:
+            qs = qs.filter(Q(title__icontains=search) | Q(content__icontains=search))
+        if category:
+            qs = qs.filter(category__icontains=category)
+        if published in {"true", "false"}:
+            qs = qs.filter(is_published=(published == "true"))
+        return qs
+
+    def perform_create(self, serializer):
+        if not self.request.user.is_staff:
+            raise PermissionDenied("Only admin users can create documentation pages.")
+        serializer.save()
+
+
+class DocumentationPageDetailView(generics.RetrieveUpdateDestroyAPIView):
+    serializer_class = DocumentationPageSerializer
+    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+
+    def get_queryset(self):
+        qs = DocumentationPage.objects.all()
+        if not self.request.user.is_authenticated or not self.request.user.is_staff:
+            qs = qs.filter(is_published=True)
+        return qs
+
+    def perform_update(self, serializer):
+        if not self.request.user.is_staff:
+            raise PermissionDenied("Only admin users can update documentation pages.")
+        serializer.save()
+
+    def perform_destroy(self, instance):
+        if not self.request.user.is_staff:
+            raise PermissionDenied("Only admin users can delete documentation pages.")
+        instance.delete()
