@@ -1,0 +1,145 @@
+"""Admin panel API views."""
+from django.contrib.auth import get_user_model
+from django.db.models import Count, Q
+from django.shortcuts import get_object_or_404
+from rest_framework import generics, permissions, status
+from rest_framework.response import Response
+from rest_framework.views import APIView
+
+from apps.core.models import AuditLog, Role, SystemSetting
+from apps.core.serializers import (
+    AdminUserSerializer,
+    AdminUserUpdateSerializer,
+    AssignTargetSerializer,
+    AuditLogSerializer,
+    RoleSerializer,
+    SystemSettingSerializer,
+)
+from apps.scans.models import Scan, Vulnerability
+from apps.targets.models import Target
+
+User = get_user_model()
+
+
+class AdminDashboardView(APIView):
+    permission_classes = [permissions.IsAdminUser]
+
+    def get(self, request):
+        data = {
+            "total_scans": Scan.objects.count(),
+            "active_targets": Target.objects.filter(is_active=True).count(),
+            "critical_vulnerabilities": Vulnerability.objects.filter(severity="High", is_false_positive=False).count(),
+            "system_health": {
+                "failed_scans": Scan.objects.filter(status=Scan.Status.FAILED).count(),
+                "queued_scans": Scan.objects.filter(status=Scan.Status.QUEUED).count(),
+                "users_total": User.objects.count(),
+            },
+        }
+        return Response(data, status=status.HTTP_200_OK)
+
+
+class AdminUserListView(generics.ListAPIView):
+    permission_classes = [permissions.IsAdminUser]
+    serializer_class = AdminUserSerializer
+    queryset = User.objects.all().select_related("role")
+    pagination_class = None
+
+
+class AdminUserManageView(APIView):
+    permission_classes = [permissions.IsAdminUser]
+
+    def patch(self, request, pk):
+        user = get_object_or_404(User, pk=pk)
+        serializer = AdminUserUpdateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        changed = {}
+        role_id = serializer.validated_data.get("role_id")
+        if role_id is not None:
+            role = get_object_or_404(Role, pk=role_id)
+            user.role = role
+            changed["role"] = role.name
+
+        if "is_active" in serializer.validated_data:
+            user.is_active = serializer.validated_data["is_active"]
+            changed["is_active"] = user.is_active
+
+        if changed:
+            user.save(update_fields=[*(["role"] if "role" in changed else []), *(["is_active"] if "is_active" in changed else []), "updated_at"])
+            AuditLog.objects.create(
+                actor=request.user,
+                action="admin_user_update",
+                entity_type="user",
+                entity_id=user.id,
+                metadata=changed,
+            )
+
+        return Response(AdminUserSerializer(user).data, status=status.HTTP_200_OK)
+
+
+class AdminAssignTargetView(APIView):
+    permission_classes = [permissions.IsAdminUser]
+
+    def post(self, request, pk):
+        user = get_object_or_404(User, pk=pk)
+        serializer = AssignTargetSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        target = get_object_or_404(Target, pk=serializer.validated_data["target_id"])
+        target.owner = user
+        target.save(update_fields=["owner", "updated_at"])
+
+        AuditLog.objects.create(
+            actor=request.user,
+            action="admin_assign_target",
+            entity_type="target",
+            entity_id=target.id,
+            metadata={"assigned_to": user.id},
+        )
+        return Response({"target_id": target.id, "owner_id": user.id}, status=status.HTTP_200_OK)
+
+
+class RoleListView(generics.ListAPIView):
+    permission_classes = [permissions.IsAdminUser]
+    serializer_class = RoleSerializer
+    queryset = Role.objects.all()
+    pagination_class = None
+
+
+class SystemSettingListCreateView(generics.ListCreateAPIView):
+    permission_classes = [permissions.IsAdminUser]
+    serializer_class = SystemSettingSerializer
+    queryset = SystemSetting.objects.all()
+    pagination_class = None
+
+    def perform_create(self, serializer):
+        setting = serializer.save(updated_by=self.request.user)
+        AuditLog.objects.create(
+            actor=self.request.user,
+            action="system_setting_create",
+            entity_type="system_setting",
+            entity_id=setting.id,
+            metadata={"key": setting.key},
+        )
+
+
+class SystemSettingDetailView(generics.RetrieveUpdateAPIView):
+    permission_classes = [permissions.IsAdminUser]
+    serializer_class = SystemSettingSerializer
+    queryset = SystemSetting.objects.all()
+
+    def perform_update(self, serializer):
+        setting = serializer.save(updated_by=self.request.user)
+        AuditLog.objects.create(
+            actor=self.request.user,
+            action="system_setting_update",
+            entity_type="system_setting",
+            entity_id=setting.id,
+            metadata={"key": setting.key},
+        )
+
+
+class AuditLogListView(generics.ListAPIView):
+    permission_classes = [permissions.IsAdminUser]
+    serializer_class = AuditLogSerializer
+    queryset = AuditLog.objects.all().select_related("actor")
+    pagination_class = None
