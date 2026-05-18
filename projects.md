@@ -4,29 +4,30 @@
 
 ### 🏠 Public Sahypalar
 
-- [ ] Home page - Platform barada maglumat, Security scanning<nolink> näme berýär, CTA: Register / Login
-- [ ] Blog - Web security makalalar, OWASP Top 10 düşüncrişler, Real world exploits mysallar, Filtering (tag: XSS, SQLi, CSRF)
-- [ ] Documentation - How web security works, OWASP Top 10 breakdown, "How to secure your API", "What is vulnerability scanning"
+- [✅] Home page - Platform barada maglumat, Security scanning<nolink> näme berýär, CTA: Register / Login
+- [✅] Blog - Web security makalalar, OWASP Top 10 düşüncrişler, Real world exploits mysallar, Filtering (tag: XSS, SQLi, CSRF)
+- [✅] Documentation - How web security works, OWASP Top 10 breakdown, "How to secure your API", "What is vulnerability scanning"
 - [ ] About / Contact - Platform info, Contact form
 
 ### 🔐 Auth Sahypalar
 
-- [ ] Register
-- [ ] Login
+- [✅] Register
+- [✅] Login
 - [ ] Forgot password
 
 ### 📊 User Dashboard
 
-- [ ] Overview - Active scans, Last scan result, Risk score summary
-- [ ] My Targets - Domain goşmak, Target status (active/inactive)
-- [ ] Scan Results - History list, Filter: date, severity, Vulnerability details (XSS, SQL Injection, Open ports, Misconfiguration)
+- [✅] Overview - Active scans, Last scan result, Risk score summary
+- [✅] My Targets - Domain goşmak, Target status (active/inactive)
+- [✅] Scan Results - History list, Filter: date, severity, Vulnerability details (XSS, SQL Injection, Open ports, Misconfiguration)
 - [ ] Scan Detail Page - Full report, OWASP category mapping, Fix recommendations, Export (PDF / JSON)
 - [ ] Notifications - Email / in-app alerts
-- [ ] Profile - Account settings, API keys
+- [✅] Profile - Account settings, API keys
+- [✅] API Console / Admin Tools - All backend endpointleri UI arkaly çagyrmak
 
 ### 🎨 UI/UX
 
-- [ ] Responsive design
+- [✅] Responsive design
 - [ ] Dark/light mode
 - [ ] Accessibility compliance
 

@@ -151,7 +151,8 @@ class AuditLogListView(generics.ListAPIView):
 
 class BlogPostListCreateView(generics.ListCreateAPIView):
     serializer_class = BlogPostSerializer
-    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+    permission_classes = [permissions.AllowAny]
+    authentication_classes = []
 
     def get_queryset(self):
         qs = BlogPost.objects.all().select_related("author")
@@ -177,7 +178,8 @@ class BlogPostListCreateView(generics.ListCreateAPIView):
 
 class BlogPostDetailView(generics.RetrieveUpdateDestroyAPIView):
     serializer_class = BlogPostSerializer
-    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+    permission_classes = [permissions.AllowAny]
+    authentication_classes = []
 
     def get_queryset(self):
         qs = BlogPost.objects.all().select_related("author")
@@ -198,7 +200,8 @@ class BlogPostDetailView(generics.RetrieveUpdateDestroyAPIView):
 
 class DocumentationPageListCreateView(generics.ListCreateAPIView):
     serializer_class = DocumentationPageSerializer
-    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+    permission_classes = [permissions.AllowAny]
+    authentication_classes = []
 
     def get_queryset(self):
         qs = DocumentationPage.objects.all()
@@ -224,7 +227,8 @@ class DocumentationPageListCreateView(generics.ListCreateAPIView):
 
 class DocumentationPageDetailView(generics.RetrieveUpdateDestroyAPIView):
     serializer_class = DocumentationPageSerializer
-    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+    permission_classes = [permissions.AllowAny]
+    authentication_classes = []
 
     def get_queryset(self):
         qs = DocumentationPage.objects.all()
