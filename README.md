@@ -1,168 +1,212 @@
-# Web Security Platform Backend
+# Web Security Platform — Backend
 
-Django + DRF backend for a web security scanning platform.
+Web howpsuzlyk skanirleme platformasynyň **backend** bölegi (Django + Django REST
+Framework). JWT autentifikasiýa, target/scan/vulnerability dolandyryşy, OWASP ZAP
+integrasiýasy, scan scheduler, analitika, admin paneli we blog/docs API-leri.
 
-## Implemented Scope
+> Frontend (Vue 3) aýratyn ammarda: `git@github.com:nedirbay/web-security.git`.
+> Doly stack-y işletmek üçin aşakdaky **«Frontend bilen bilelikde»** bölümine serediň.
 
-Backend modules and features completed:
+---
 
-- Core structure, env-based config, custom exception handling
-- User management:
-  - JWT auth (register/login/logout)
-  - password reset flow
-  - profile management
-  - API key management
-- Target management:
-  - add/list/remove targets
-  - ownership verification token flow
-  - enable/disable scan
-  - assign target to user
-- Scanner integration (OWASP ZAP):
-  - real ZAP REST client flow (spider, active, api import attempt, alerts fetch)
-  - scan configuration + proxy fields
-  - result parsing and persistence
-- Scan scheduler:
-  - daily/weekly/custom schedules
-  - enqueue due schedules
-  - worker processing + retry logic
-  - queue integration with RabbitMQ
-- Results & vulnerabilities:
-  - vulnerability storage, severity filter, OWASP grouping
-  - false-positive toggle
-  - lifecycle updates
-- Analytics & statistics:
-  - trends, common issues, success rate, risk heatmap, time-based report
-- Admin panel:
-  - dashboard, user management, role assignment
-  - settings management
-  - audit logs
-- Security:
-  - multi-tenant isolation in querysets/ownership checks
-  - rate limiting with admin bypass
-  - admin IP whitelist permission
-  - input sanitization
-  - security headers (CSP/HSTS etc.)
-- Blog & docs backend APIs (CRUD/search/filter/pagination/tags)
-- Advanced optional APIs:
-  - Postman-like API scan simulation
-  - JWT vulnerability checks
-  - GraphQL security checks
-  - header analysis
-  - AI-style risk summary endpoint
+## Mazmuny
+- [Tehnologiýalar](#tehnologiýalar)
+- [Talaplar](#talaplar)
+- [1. Gurnamak](#1-gurnamak)
+- [2. Daşky gurşaw (.env)](#2-daşky-gurşaw-env)
+- [3. Maglumat bazasy we seed](#3-maglumat-bazasy-we-seed)
+- [4. Serweri işletmek](#4-serweri-işletmek)
+- [5. Testleri işletmek](#5-testleri-işletmek)
+- [6. Frontend bilen bilelikde (full-stack)](#6-frontend-bilen-bilelikde-full-stack)
+- [Goşmaça: ZAP / RabbitMQ / Worker](#goşmaça-zap--rabbitmq--worker)
+- [Standart ulanyjylar](#standart-ulanyjylar)
+- [API resminamasy](#api-resminamasy)
+- [Taslamanyň gurluşy](#taslamanyň-gurluşy)
+- [Näsazlyklary düzetmek](#näsazlyklary-düzetmek)
 
-Project checklist status is tracked in `projects.md`.
+---
 
-## Tech Stack
-
-- Python 3.12
-- Django 6
-- Django REST Framework
-- SimpleJWT
-- SQLite (default)
-- RabbitMQ (queue)
-- OWASP ZAP (scanner)
-- Pytest
-
-## Project Structure
-
-- `apps/users` auth/profile/api-key
-- `apps/targets` target management
-- `apps/scans` scans, scheduler, analytics, advanced features
-- `apps/core` admin panel, audit, security helpers/middleware
-- `backend` project settings/urls
-
-## Prerequisites
-
+## Tehnologiýalar
 - Python 3.12+
-- `venv` created in project root (`./venv`)
-- Docker + Docker Compose
+- Django 4.2+ / 6.x
+- Django REST Framework + SimpleJWT (JWT auth)
+- SQLite (standart) — PostgreSQL hem goldanýar
+- RabbitMQ (scan nobaty — islege bagly)
+- OWASP ZAP (skaner — islege bagly)
+- Pytest + pytest-django (testler)
 
-## Environment Variables
+## Talaplar
+- **Python 3.12+** we `venv`
+- (Islege bagly) **Docker + Docker Compose** — RabbitMQ we ZAP üçin
 
-Configured in `.env` (existing file):
+---
 
-- `DJANGO_SECRET_KEY`
-- `DJANGO_DEBUG`
-- `DJANGO_ALLOWED_HOSTS`
-- `RABBITMQ_URL`
-- `RABBITMQ_QUEUE`
-- `ZAP_API_URL` (default `http://localhost:8090`)
-- `ADMIN_IP_WHITELIST` (example: `127.0.0.1,::1,10.0.0.0/24`)
-
-## Install
+## 1. Gurnamak
 
 ```bash
-cd /home/ubuntu/Desktop/Projects/web-security/backend1
-venv/bin/pip install -r requirements.txt
+# Ammary klonlaň
+git clone git@github.com:nedirbay/web-security-backend.git
+cd web-security-backend
+
+# Wirtual gurşaw dörediň we işjeňleşdiriň
+python3 -m venv venv
+source venv/bin/activate          # Windows: venv\Scripts\activate
+
+# Baglylyklary ýükläň
+pip install -r requirements.txt
 ```
 
-## Run Infrastructure (RabbitMQ + ZAP)
+## 2. Daşky gurşaw (.env)
+
+Ammarda eýýäm `.env` faýly bar (lokal ösüş üçin). Esasy üýtgeýjiler:
+
+```ini
+DJANGO_SECRET_KEY=...                 # önümçilikde hökman üýtgediň
+DJANGO_DEBUG=True
+DJANGO_ALLOWED_HOSTS=localhost,127.0.0.1
+
+DB_ENGINE=django.db.backends.sqlite3
+DB_NAME=db.sqlite3
+
+JWT_ACCESS_TOKEN_LIFETIME=60          # minut
+JWT_REFRESH_TOKEN_LIFETIME=1          # gün
+
+RABBITMQ_URL=amqp://guest:guest@localhost:5672/%2F
+RABBITMQ_QUEUE=scan_jobs
+ZAP_API_URL=http://localhost:8090
+
+# CORS — frontend origin-leri (otly bilen bölünen). Boş goýulsa standart
+# dev portlary ulanylýar: 5173/3000/4173 (localhost we 127.0.0.1).
+# CORS_ALLOWED_ORIGINS=http://localhost:5173
+# CORS_ALLOW_ALL_ORIGINS=False
+```
+
+> **Howpsuzlyk belligi:** `CORS_ALLOW_ALL_ORIGINS=True` + credentials howpsuz däl
+> kombinasiýa we brauzerler ony ret edýär. Önümçilikde anyk `CORS_ALLOWED_ORIGINS`
+> allow-list ulanyň (standart sazlama hut şeýle edýär).
+
+## 3. Maglumat bazasy we seed
+
+```bash
+# Migrasiýalary ulanyň
+python manage.py migrate
+
+# Seed: standart ulanyjylar + blog/docs (admin@guardly.com / admin123 ...)
+python manage.py shell < seed_db.py
+
+# Seed: her list endpoint üçin azyndan bir setir maglumat
+# (target/scan/vulnerability/schedule/zap/apikey/setting/auditlog)
+python manage.py shell < seed_fixtures.py
+```
+
+> `seed_fixtures.py` frontend contract testleriniň her endpointde maglumat tapmagy
+> üçin gerek (vulnerability-ler ZAP-syz hem döredilýär).
+
+## 4. Serweri işletmek
+
+```bash
+python manage.py runserver 127.0.0.1:8000
+```
+
+- Esasy API: `http://127.0.0.1:8000/api/`
+- Swagger UI: `http://127.0.0.1:8000/api/docs/`
+- OpenAPI JSON: `http://127.0.0.1:8000/api/schema/`
+
+## 5. Testleri işletmek
+
+```bash
+source venv/bin/activate
+python -m pytest -q
+```
+
+Soňky ýagdaý: **82 passed**. (Konfigurasiýa: `pytest.ini`, `DJANGO_SETTINGS_MODULE=backend.settings`.)
+
+---
+
+## 6. Frontend bilen bilelikde (full-stack)
+
+Iki terminal ulanyň.
+
+**Terminal A — backend:**
+```bash
+cd web-security-backend
+source venv/bin/activate
+python manage.py migrate
+python manage.py shell < seed_db.py
+python manage.py shell < seed_fixtures.py
+python manage.py runserver 127.0.0.1:8000
+```
+
+**Terminal B — frontend** (`web-security` ammary):
+```bash
+cd web-security
+npm install
+npm run dev            # http://localhost:5173
+```
+
+Frontend `VITE_API_BASE_URL` arkaly backende baglanýar (standart
+`http://localhost:8000/api/`). Standart hasap bilen giriň: `admin@guardly.com / admin123`.
+
+**Frontend ↔ backend contract testleri** (backend işläp durka, `web-security`-de):
+```bash
+npm test
+```
+Bu testler MOCK ulanmaýar — göni janly backende baglanyp, model/endpoint laýyklygyny
+barlaýar. Doly hasabat: `web-security/MODEL_UYGUNLYK_HASABATY.md`.
+
+---
+
+## Goşmaça: ZAP / RabbitMQ / Worker
+
+Hakyky skanirleme we nobat üçin (islege bagly):
 
 ```bash
 docker compose up -d rabbitmq zap
 docker compose ps
 ```
-
-Useful endpoints:
-
 - RabbitMQ UI: `http://localhost:15672` (`guest/guest`)
 - ZAP API: `http://localhost:8090/JSON/core/view/version/`
 
-## Database Setup
+> ZAP elýeterli däl bolsa, müşderi howpsuz «fallback» edýär — lokal akym dowam edýär
+> (boş alert sanawy bilen).
 
+Scan worker:
 ```bash
-venv/bin/python manage.py migrate
-venv/bin/python manage.py seed_data
+python manage.py run_scan_worker --once       # bir aýlaw
+python manage.py run_scan_worker --sleep 3    # üznüksiz polling
 ```
+Scheduler endpointleri: `POST /api/scans/scheduler/enqueue/`,
+`POST /api/scans/scheduler/worker-run/`.
 
-## Run Backend
+## Standart ulanyjylar
 
-```bash
-venv/bin/python manage.py runserver
-```
+`seed_db.py`-den soň:
 
-Base API:
+| Rol | Email | Parol |
+|---|---|---|
+| Admin (`is_staff=True`) | `admin@guardly.com` | `admin123` |
+| Adaty ulanyjy | `user@guardly.com` | `user123` |
 
-- `http://127.0.0.1:8000/api/`
+> Admin barlaglary `is_staff`-a esaslanýar (`IsAdminUser`). `role` meýdany
+> `core.Role`-a ForeignKey (string däl).
 
-Docs:
+## API resminamasy
+- Swagger UI: `/api/docs/`
+- OpenAPI: `/api/schema/`
+- Goşmaça: `Api_endpoints.md`, `projects.md`
 
-- Swagger UI: `http://127.0.0.1:8000/api/docs/`
-- OpenAPI JSON: `http://127.0.0.1:8000/api/schema/`
+## Taslamanyň gurluşy
+- `apps/users` — auth, profil, API key
+- `apps/targets` — target dolandyryşy, eýeçilik tassyklamasy
+- `apps/scans` — skanlar, scheduler, analitika, advanced funksiýalar
+- `apps/core` — admin paneli, audit, howpsuzlyk kömekçileri/middleware, blog/docs
+- `backend` — taslama sazlamalary/url-leri
 
-## Run Worker / Scheduler
-
-One-time worker cycle:
-
-```bash
-venv/bin/python manage.py run_scan_worker --once
-```
-
-Continuous polling worker:
-
-```bash
-venv/bin/python manage.py run_scan_worker --sleep 3
-```
-
-Admin scheduler endpoints:
-
-- `POST /api/scans/scheduler/enqueue/`
-- `POST /api/scans/scheduler/worker-run/`
-
-## Run Tests
-
-Full suite:
-
-```bash
-venv/bin/pytest -q
-```
-
-Current status (latest run):
-
-- `82 passed`
-
-## Notes
-
-- ZAP integration uses real REST calls; when ZAP is unavailable, client falls back safely for local flow continuity.
-- Admin endpoints are protected by both `IsAdminUser` and IP whitelist checks.
-- Security headers are added via middleware and Django security settings.
+## Näsazlyklary düzetmek
+- **CORS ýalňyşy brauzerde:** `.env`-de `CORS_ALLOWED_ORIGINS`-e frontend origin-iňizi
+  goşuň (mysal: `http://localhost:5173`).
+- **401 / token möhleti gutardy:** access token 60 minut. Täzeden giriň ýa-da
+  `JWT_ACCESS_TOKEN_LIFETIME`-y artdyryň.
+- **Contract testlerde boş list:** `seed_fixtures.py`-ni ýene işlediň.
+- **`runserver` kod üýtgeşmesini almaýar:** `--noreload` bilen başladan bolsaňyz,
+  serweri täzeden başladyň.

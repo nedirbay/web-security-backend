@@ -125,7 +125,18 @@ SIMPLE_JWT = {
 
 
 # CORS Settings
-CORS_ALLOW_ALL_ORIGINS = True
+# Explicit allow-list (allow-all + credentials is ignored by browsers and unsafe).
+CORS_ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv(
+        "CORS_ALLOWED_ORIGINS",
+        "http://localhost:5173,http://127.0.0.1:5173,"
+        "http://localhost:3000,http://127.0.0.1:3000,"
+        "http://localhost:4173,http://127.0.0.1:4173",
+    ).split(",")
+    if origin.strip()
+]
+CORS_ALLOW_ALL_ORIGINS = os.getenv("CORS_ALLOW_ALL_ORIGINS", "False") == "True"
 CORS_ALLOW_CREDENTIALS = True
 
 # Security headers and transport
